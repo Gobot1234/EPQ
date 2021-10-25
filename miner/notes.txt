@@ -1,0 +1,4 @@
+Assumptions and the results of the data
+What modifications are going to happen
+Talk about where things are up to, what problems are being encountered and whats going in the 1000 words.
+Make sure to put it on GitHub. 
