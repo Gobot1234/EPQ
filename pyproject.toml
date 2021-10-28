@@ -2,7 +2,7 @@
 name = "epq"
 version = "0.1.0"
 description = ""
-authors = ["James Hilton-Balfe <gobot1234yt@gmail.com>"]
+authors = ["James Hilton-Balfe <jhiltonbalfe@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -23,6 +23,7 @@ line_length = 120
 
 [tool.pyright]
 venv = ".venv"
+typeCheckingMode = "strict"
 pythonVersion = "3.10"
 
 [build-system]

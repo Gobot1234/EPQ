@@ -43,9 +43,14 @@ class Material(Enum):
         price: float  # price in USD per kg
         density: float  # kgm^-3
 
-    GANG = Info(0, 5)  # Gangronus materials have no economic value
-    SI = Info(8.1, 1442)
-    FE = Info(45.6, 4.5)
+    GANG = Info(0, 2_500)  # Gangronus materials have no economic value. Roughly the density of the Earth's crust
+    H2O = Info(1_000, 1_000)  # SpaceX's Falcon 9 (used to delviver to the ISS) costs $2,720 per kilogram.
+    SI = Info(8.1, 1_400)
+    FE = Info(45.6, 7_300)
+    PT = Info(33_000, 21_450)
+    MG = Info(15, 1_740)
+    O2 = Info(10, 1_400)
+    NI = Info(18, 8_908)
 
     @property
     def price(self) -> float:
@@ -62,16 +67,24 @@ class Contents(NamedTuple):
 
 
 class Category(Enum):
+    value: tuple[tuple[int], list[Material]]
+
     def likely_contents(self, volume: float):
-        name = self.__class__.__name__
-        if name.startswith("C"):
-            return [Contents(Material.SI, 1 * volume)]
-        elif name.startswith("S"):
-            return [Contents(Material.SI, 0.75 * volume), Contents(Material.FE, 0.25 * volume)]
-        elif name.startswith("X"):
-            return [Contents(Material.FE, 1 * volume)]
-        else:
-            return [Contents(Material.SI, 1 * volume)]
+        _, materials = self.value
+        proportions = [
+            1 / (i + 2) for i in range(len(materials))
+        ]  # scaled falling off of the proportions using an offset y=1/x graph
+        normaliser = 1 / sum(proportions)
+        return [
+            Contents(
+                material,
+                volume * proportion * normaliser,  # makes the volume total the correct value
+            )
+            for material, proportion in zip(materials, proportions)
+        ]
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}.{self.name} eta={self.value[0][0]}>"
 
 
 class Type:
@@ -84,24 +97,38 @@ class Type:
     """
 
     class C(Category):
-        B = (0.113,)
-        C = (0.061,)
-        F = (0.058,)
-        G = (0.073,)
+        # https://en.wikipedia.org/wiki/C-type_asteroid
+        B = (
+            (0.113,),
+            [Material.GANG, Material.H2O, Material.GANG, Material.FE],
+        )  # https://en.wikipedia.org/wiki/B-type_asteroid#Characteristics
+        C = (0.061,), [Material.GANG, Material.H2O, Material.FE]
+        F = (
+            (0.058,),
+            [Material.GANG, Material.GANG, Material.FE, Material.GANG],
+        )  # "F-type asteroids have spectra generally similar to those of the B-type asteroids, but lack ... hydrated minerals"
+        G = (0.073,), [Material.GANG]  # https://en.wikipedia.org/wiki/G-type_asteroid  # check Ceres is in this
 
     class S(Category):
-        A = (0.282,)
-        R = (0.277,)
-        S = (0.213,)
-        O = (0.256,)
-        K = (0.143,)
+        # https://en.wikipedia.org/wiki/S-type_asteroid
+        A = (0.282,), [Material.O2, Material.SI, Material.MG]  # https://en.wikipedia.org/wiki/A-type_asteroid
+        R = (0.277,), [Material.SI]  # https://en.wikipedia.org/wiki/R-type_asteroid
+        S = (0.213,), [Material.GANG]  # haven't found info on these yet.
+        O = (0.256,), [Material.GANG]
+        K = (
+            (0.143,),
+            [Material.SI, Material.GANG, Material.H2O, Material.GANG],
+        )  # https://en.wikipedia.org/wiki/K-type_asteroid
 
     class X(Category):
-        X = (0.084,)
-        XD = (0.080,)
-        XL = (0.123,)
+        E = (0.559,), [Material.FE, Material.SI, Material.MG]
+        M = (0.175,), [Material.FE, Material.NI, Material.PT, Material.GANG]
+        P = (
+            (0.049,),
+            [Material.SI, Material.GANG, Material.H2O, Material.GANG],
+        )  # https://en.wikipedia.org/wiki/P-type_asteroid
 
-    categories: tuple[Category, ...] = tuple(itertools.chain(C, S, X))
+    CATEGORIES = tuple(itertools.chain.from_iterable(Category.__subclasses__()))
 
     @classmethod
     def from_(cls, data: Asteroid.Data) -> Category:
@@ -109,20 +136,11 @@ class Type:
         # for a lot of data on this.
         dist = statistics.NormalDist(
             data.eta,  # mean infra red beaming param
-            statistics.mean(
+            statistics.fmean(
                 (data.eta1sigu, data.eta1sigl, data.eta3sigu, data.eta3sigl)
             ),  # mean of the upper and lower sigma bounds
         )
-        winner = cls.C.B
-        winner_diff = abs(winner.value[0] - data.pv)
-        for category in cls.categories[1:]:
-            average_geometric_albedo = category.value[0]
-            current_diff = abs(average_geometric_albedo - data.pv)
-            if current_diff < winner_diff:
-                winner = category
-                winner_diff = current_diff
-
-        return winner
+        return min(cls.CATEGORIES, key=lambda category: abs(category.value[0][0] - data.pv))
 
 
 class cached_slot_property(Generic[P, T]):
@@ -132,21 +150,21 @@ class cached_slot_property(Generic[P, T]):
         self.__func__ = func
 
     @overload
-    def __get__(self: Self, instance: None, owner) -> Self:
+    def __get__(self: Self, instance: None, _) -> Self:
         ...
 
     @overload
-    def __get__(self, instance: Any, owner: Any) -> T:
+    def __get__(self, instance: Any, _) -> T:
         ...
 
-    def __get__(self: Self, instance: None, owner) -> T | Self:
+    def __get__(self, instance: Any, _):  # type: ignore
         if instance is None:
             return self
 
         attr = f"_{self.__func__.__name__}_cs"
         result = getattr(instance, attr)
         if result is ...:
-            result = self.__func__(instance)
+            result = self.__func__(instance)  # type: ignore
             setattr(instance, attr, result)
         return result
 
@@ -235,7 +253,7 @@ class Asteroid(Satellite, Body):
     def contents(self) -> list[Contents]:
         return self.type.likely_contents(self.volume)
 
-    @cached_slot_property
+    @cached_slot_property  # type: ignore
     def radius(self) -> float:
         """The radius of the asteroid assuming it is a perfect sphere."""
         return self.data.diam.si.value / 2
@@ -246,7 +264,7 @@ class Asteroid(Satellite, Body):
         return 4 / 3 * math.pi * self.radius ** 3
 
     @property
-    def identifier(self) -> Union[str, int]:
+    def identifier(self) -> str | int:
         """A unique identifier for each asteroid."""
         return self.data.name or self.data.number or self.data.desig
 
@@ -255,7 +273,7 @@ class Asteroid(Satellite, Body):
         """The total price of the asteroid"""
         return sum(material.price * amount for material, amount in self.contents)
 
-    @cached_slot_property
+    @cached_slot_property  # type: ignore
     def mass(self) -> float:
         """The total mass of the asteroid"""
         # p = m/v

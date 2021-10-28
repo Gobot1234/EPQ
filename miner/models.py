@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from datetime import date, datetime, timezone
-import ctypes
-from astropy.constants import G
 
 from .asteroid import Asteroid
 from .station import Body, Planet, Station
@@ -22,7 +19,6 @@ class Miner:
     money_made: float = 0
     fuel: float = 30_000  # the mass of fuel the miner has in kg.
     efficiency: float = 500_000_000  # conversion rate of the 1kg of fuel to energy in Joules. This might have to be a prop depedning on our location
-    velocity: float = ...  # the current velocity of the miner.
 
     def __post_init__(self) -> None:
         self.position = self.base_station.position
@@ -49,8 +45,7 @@ class Miner:
         delta_v = (self.carrying or self.base_station).delta_v_for(self)
         energy = 1 / 2 * self.mass * delta_v ** 2  # constant acceleration means this is all the energy we need
         # acceleration = G.value * self.mass * target.mass / (target.position | self.position ** 2)
-        # target.gravity * self.mass * target
-        return energy * self.efficiency
+        return energy / self.efficiency
 
     def travel_to(self, target: HasPosition) -> None:
         if isinstance(target, Asteroid):
@@ -60,7 +55,8 @@ class Miner:
             if self.carrying is not None:
                 self.money_made += self.carrying.price
                 self.carrying = None
+            self.fuel -= self.fuel_to_get_to(target)
 
         position = target.position
 
-        self.position = position
+        self.position = position  # type: ignore

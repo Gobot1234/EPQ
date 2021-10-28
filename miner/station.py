@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, ClassVar, Protocol, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, TypeVar
 
 from astropy import units
 from astropy.constants import G, M_earth, M_sun, R_earth, R_sun, au
@@ -32,7 +32,6 @@ class Station:
         return cls.__name__
 
 
-
 class Body:
     mass: float
     radius: float
@@ -55,7 +54,7 @@ class Planet(Station, Body):
     orbit_distance: float
     orbit_period: timedelta
 
-    @property
+    @property  # type: ignore
     def position(cls) -> Position:
         now = datetime.now(tz=timezone.utc)
         jan_1st = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -71,13 +70,13 @@ class Planet(Station, Body):
 class Satellite:
     """A Satellite is any object that has an orbit around another body."""
 
-    bound_to: type[HasPosition]
+    bound_to: HasPosition
     orbit_distance: float
     orbit_period: timedelta
 
     @property
     def position(self) -> Position:
-        main_station_position = self.bound_to.position
+        main_station_position: Position = self.bound_to.position  # type: ignore
         now = datetime.now(tz=timezone.utc)
         jan_1st = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
         current_cycle = jan_1st
@@ -91,31 +90,36 @@ class Satellite:
         return Position(x, 0, z) + main_station_position
 
 
+def instanciate(cls: type[T]) -> T:
+    return cls()
+
+
 # neat trick to instantiate the Moon class so it's position can be worked out in Satellite.position
-@lambda cls: cls()
+@instanciate
 class Sun(Body):
     # we use a heliocentric model as everything we are currently interested in mining orbits around the sun.
     position = Position.origin()
-    mass: float = M_sun.value
-    radius: float = R_sun.value
+    mass: float = M_sun.value  # type: ignore
+    radius: float = R_sun.value  # type: ignore
 
 
-@lambda cls: cls()
+@instanciate
 class Earth(Planet):
-    orbit_distance: float = au.value  # 1 AU in m
+    orbit_distance: float = au.value  # type: ignore # 1 AU in m
     orbit_period = timedelta(days=365.25)
-    mass: float = M_earth.value
-    radius: float = R_earth.value
+    mass: float = M_earth.value  # type: ignore
+    radius: float = R_earth.value  # type: ignore
 
 
-@lambda cls: cls()
+@instanciate
 class Moon(Satellite, Station, Body):
     bound_to = Earth
     orbit_distance = 384_400_000
     orbit_period = timedelta(days=28)
     gravity = 1.62
 
-@lambda cls: cls()
+
+@instanciate
 class Mars(Planet):
     orbit_distance = 248_550_000_000
     orbit_period = timedelta(days=687)
