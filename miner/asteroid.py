@@ -5,6 +5,7 @@ import itertools
 import math
 import random
 import statistics
+from operator import attrgetter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -29,7 +30,9 @@ from astropy.units import Quantity
 from .station import Satellite, Sun, Body
 
 if TYPE_CHECKING:
-    from _typeshed import Self
+    from typing_extensions import Self
+
+    from .models import Miner
 
 
 ASTEROIDS: Final[Sequence[Asteroid]] = []
@@ -43,14 +46,14 @@ class Material(Enum):
         price: float  # price in USD per kg
         density: float  # kgm^-3
 
-    GANG = Info(0, 2_500)  # Gangronus materials have no economic value. Roughly the density of the Earth's crust
-    H2O = Info(1_000, 1_000)  # SpaceX's Falcon 9 (used to delviver to the ISS) costs $2,720 per kilogram.
+    GANG = Info(0, 2_500)  # Gangrenous materials have no economic value. Roughly the density of the Earth's crust
+    H2O = Info(1_000, 1_000)  # SpaceX's Falcon 9 (used to deliver to the ISS) costs $2,720 per kilogram.
     SI = Info(8.1, 1_400)
     FE = Info(45.6, 7_300)
     PT = Info(33_000, 21_450)
     MG = Info(15, 1_740)
     O2 = Info(10, 1_400)
-    NI = Info(18, 8_908)
+    NI = Info(18, 8_910)
 
     @property
     def price(self) -> float:
@@ -63,7 +66,19 @@ class Material(Enum):
 
 class Contents(NamedTuple):
     material: Material
-    amount: float  # the mass of the contents
+    volume: float
+
+    @property
+    def mass(self) -> float:
+        return self.material.density * self.volume
+
+    @property
+    def price(self) -> float:
+        return self.material.price * self.mass
+
+    @property
+    def price_to_density_ratio(self) -> float:
+        return self.price / self.material.density
 
 
 class Category(Enum):
@@ -83,8 +98,12 @@ class Category(Enum):
             for material, proportion in zip(materials, proportions)
         ]
 
+    @property
+    def pv(self) -> float:
+        return self.value[0][0]
+
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}.{self.name} eta={self.value[0][0]}>"
+        return f"<{self.__class__.__name__}.{self.name} eta={self.pv}>"
 
 
 class Type:
@@ -100,21 +119,24 @@ class Type:
         # https://en.wikipedia.org/wiki/C-type_asteroid
         B = (
             (0.113,),
-            [Material.GANG, Material.H2O, Material.GANG, Material.FE],
+            [Material.SI, Material.H2O, Material.GANG, Material.FE],
         )  # https://en.wikipedia.org/wiki/B-type_asteroid#Characteristics
         C = (0.061,), [Material.GANG, Material.H2O, Material.FE]
         F = (
             (0.058,),
-            [Material.GANG, Material.GANG, Material.FE, Material.GANG],
+            [Material.FE, Material.GANG],
         )  # "F-type asteroids have spectra generally similar to those of the B-type asteroids, but lack ... hydrated minerals"
         G = (0.073,), [Material.GANG]  # https://en.wikipedia.org/wiki/G-type_asteroid  # check Ceres is in this
 
     class S(Category):
         # https://en.wikipedia.org/wiki/S-type_asteroid
-        A = (0.282,), [Material.O2, Material.SI, Material.MG]  # https://en.wikipedia.org/wiki/A-type_asteroid
-        R = (0.277,), [Material.SI]  # https://en.wikipedia.org/wiki/R-type_asteroid
-        S = (0.213,), [Material.GANG]  # haven't found info on these yet.
-        O = (0.256,), [Material.GANG]
+        A = (
+            (0.282,),
+            [Material.O2, Material.SI, Material.MG],
+        )  # https://en.wikipedia.org/wiki/A-type_asteroid
+        R = (0.277,), [Material.SI, Material.GANG]  # https://en.wikipedia.org/wiki/R-type_asteroid
+        S = (0.213,), [Material.GANG, Material.GANG]  # haven't found info on these yet.
+        O = (0.256,), [Material.GANG, Material.GANG]
         K = (
             (0.143,),
             [Material.SI, Material.GANG, Material.H2O, Material.GANG],
@@ -122,7 +144,7 @@ class Type:
 
     class X(Category):
         E = (0.559,), [Material.FE, Material.SI, Material.MG]
-        M = (0.175,), [Material.FE, Material.NI, Material.PT, Material.GANG]
+        M = (0.175,), [Material.FE, Material.NI, Material.GANG, Material.PT, Material.GANG]
         P = (
             (0.049,),
             [Material.SI, Material.GANG, Material.H2O, Material.GANG],
@@ -140,7 +162,12 @@ class Type:
                 (data.eta1sigu, data.eta1sigl, data.eta3sigu, data.eta3sigl)
             ),  # mean of the upper and lower sigma bounds
         )
-        return min(cls.CATEGORIES, key=lambda category: abs(category.value[0][0] - data.pv))
+        return min(
+            cls.CATEGORIES,
+            key=lambda category: abs(  # the minimum absolute difference between the geometric albedos
+                category.pv - data.pv
+            ),
+        )
 
 
 class cached_slot_property(Generic[P, T]):
@@ -236,6 +263,7 @@ class Asteroid(Satellite, Body):
     data: Data
     type: Category
     bound_to = Sun
+    miner: Miner = ...
     # cached slots
     _contents_cs = ...
     _radius_cs = ...
@@ -270,14 +298,32 @@ class Asteroid(Satellite, Body):
 
     @cached_slot_property
     def price(self) -> float:
-        """The total price of the asteroid"""
-        return sum(material.price * amount for material, amount in self.contents)
+        """The total price of the asteroid."""
+        return sum([c.price for c in self.contents])
 
     @cached_slot_property  # type: ignore
     def mass(self) -> float:
-        """The total mass of the asteroid"""
-        # p = m/v
-        return sum(material.density * amount for material, amount in self.contents)
+        """The total mass of the asteroid."""
+        # density / volume = mass
+        return sum([c.mass for c in self.contents])
+
+    def best_to_take_home(self, within_mass: float) -> list[Contents]:
+        best: list[Contents] = []
+        for content in sorted(self.contents, key=attrgetter("price_to_density_ratio")):
+            if content.material == Material.GANG:
+                return best
+
+            within_mass -= content.mass
+            if within_mass <= 0:
+                if within_mass != 0:  #  only take some of the contents back
+                    total_mass = content.material.density * content.volume
+                    best.append(
+                        Contents(content.material, volume=(total_mass + within_mass) * content.material.density)
+                    )
+                return best
+            best.append(content)
+
+        return best
 
     @cached_slot_property
     def image(self) -> str:
