@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Callable, TypeVar
 
-from astropy import units
 from astropy.constants import G, M_earth, M_sun, R_earth, R_sun, au
-from astropy.units import Unit
+from astropy.coordinates import CartesianRepresentation, get_body, get_sun
+from astropy.time import Time
 
 from .position import HasPosition, Position
 
 if TYPE_CHECKING:
-    from .models import Miner
+    from .miner import Miner
 
 __all__ = (
     "Earth",
@@ -23,13 +23,19 @@ T = TypeVar("T")
 
 
 class Station:
-    position: ClassVar[Position]
-    gravity: ClassVar[float]
+    gravity: float
 
     @classmethod
     @property
     def name(cls) -> str:
-        return cls.__name__
+        return cls.__name__.lower()
+
+    def position_at(self, dt: datetime) -> Position:
+        raise NotImplementedError()
+
+    @property
+    def position(self) -> Position:
+        return self.position_at(datetime.now(tz=timezone.utc))
 
 
 class Body:
@@ -41,57 +47,48 @@ class Body:
     def gravity(self) -> float:
         return G.value * self.mass / self.radius ** 2
 
-    def delta_v_for(self, miner: Miner) -> float:
+    def delta_v_for(
+        self,
+        miner: Miner,
+        *,
+        atm: float,  # atmospheric pressure compared to the Earths.
+        ve: float = 3510,
+    ) -> float:
         """Based on https://en.wikipedia.org/wiki/Tsiolkovsky_rocket_equation"""
-        lsp = 3300
-        # value is the mean of https://en.wikipedia.org/wiki/Liquid_rocket_propellant#Bipropellants's LOX column as
-        # this is the fuel that the Falcon 9 uses.
-        # "specific impulse is exactly proportional to exhaust gas velocity" -
-        # https://en.wikipedia.org/wiki/Specific_impulse
-        return lsp * self.gravity * math.log(miner.mass / miner.base_mass)
+        # value of ve is the mean of https://en.wikipedia.org/wiki/Liquid_rocket_propellant#Bipropellants's LOX column as
+        # this is the fuel that the Falcon Heavy uses.
+        # ∆y / ∆x = (3510 - 2941) / (1 - 0) = 569
+        # assuming here that the change of ve is linear.
+        # y = -569x + 2372
+        return (-569 * atm + ve) * math.log(miner.mass / miner.current_stage_final_mass)
 
 
 class Planet(Station, Body):
     orbit_distance: float
     orbit_period: timedelta
+    atm: float
 
-    @property  # type: ignore
-    def position(self) -> Position:
-        now = datetime.now(tz=timezone.utc)
-        jan_1st = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        percentage_complete = (now - jan_1st).total_seconds() / self.orbit_period.total_seconds()
-        angle = (2 * math.pi) * percentage_complete  # angle in radians
-        # if you think of this from a bird's eye view and the x and y components similarly to a unit circle diagram this
-        # makes more sense
-        x = math.sin(angle) * self.orbit_distance
-        z = math.cos(angle) * self.orbit_distance
-        return Position(x, 0, z)  # assume the orbit is flat
+    def position_at(self, dt: datetime) -> Position:
+        time = Time(dt)
+        sky_coord = get_body(self.name, time)  # relative to the Earth, needs re-framing
+        position: CartesianRepresentation = sky_coord.cartesian - get_sun(time).cartesian  # type: ignore
+        return Position(position.x.si.value, position.y.si.value, position.z.si.value)  # type: ignore
 
 
-class Satellite:
+class Satellite(Station):
     """A Satellite is any object that has an orbit around another body."""
 
     bound_to: HasPosition
     orbit_distance: float
     orbit_period: timedelta
 
-    @property
-    def position(self) -> Position:
-        main_station_position: Position = self.bound_to.position  # type: ignore
-        now = datetime.now(tz=timezone.utc)
-        jan_1st = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        current_cycle = jan_1st
-        while now > current_cycle + self.orbit_period:  # get to the current position in the orbital cycle
-            current_cycle += self.orbit_period
-
-        percentage_complete = (now - current_cycle).total_seconds() / self.orbit_period.total_seconds()
-        angle = 2 * math.pi * percentage_complete
-        x = math.sin(angle) * self.orbit_distance
-        z = math.cos(angle) * self.orbit_distance
-        return Position(x, 0, z) + main_station_position
+    def position_at(self, dt: datetime) -> Position:
+        main_station_position = self.bound_to.position_at(dt)
+        position = Planet.position_at(self, dt)  # type: ignore
+        return position + main_station_position
 
 
-def instantiate(cls: type[T]) -> T:
+def instantiate(cls: Callable[[], T]) -> T:
     return cls()
 
 
@@ -103,6 +100,9 @@ class Sun(Body):
     mass: float = M_sun.value  # type: ignore
     radius: float = R_sun.value  # type: ignore
 
+    def position_at(self, dt: datetime) -> Position:
+        return self.position  # it's always at (0, 0, 0)
+
 
 @instantiate
 class Earth(Planet):
@@ -110,6 +110,7 @@ class Earth(Planet):
     orbit_period = timedelta(days=365.25)
     mass: float = M_earth.value  # type: ignore
     radius: float = R_earth.value  # type: ignore
+    atm: float = 1.0
 
 
 @instantiate
@@ -118,6 +119,7 @@ class Moon(Satellite, Station, Body):
     orbit_distance = 384_400_000
     orbit_period = timedelta(days=28)
     gravity = 1.62
+    atm: float = 3.0e-15  # basically nothing
 
 
 @instantiate
@@ -125,3 +127,4 @@ class Mars(Planet):
     orbit_distance = 248_550_000_000
     orbit_period = timedelta(days=687)
     gravity = 3.72
+    atm = 0.0060

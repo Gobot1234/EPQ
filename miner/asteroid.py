@@ -4,35 +4,31 @@ import csv
 import itertools
 import math
 import random
-import statistics
-from operator import attrgetter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Final,
-    Generic,
-    NamedTuple,
-    ParamSpec,
-    TypeVar,
-    Union,
-    get_type_hints,
-    overload,
-)
+from operator import attrgetter, itemgetter
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, ParamSpec, TypeVar, Union, get_type_hints
 
 from astropy import units
+from astropy.constants import G
+from astropy.coordinates import SkyCoord, get_sun
+from astropy.coordinates.representation import CartesianRepresentation
+from astropy.time import Time
 from astropy.units import Quantity
+from sympy import nsolve, sin, solve, tan
+from sympy.abc import E
+from sympy.abc import theta as theta_
 
-from .station import Satellite, Sun, Body
+from _miner import determine_perihelion
+
+from .position import Position
+from .station import Body, Satellite, Sun
+from .utils import cached_slot_property, get_spitzer
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
-
-    from .models import Miner
+    from .miner import Miner
 
 
 ASTEROIDS: Final[Sequence[Asteroid]] = []
@@ -46,7 +42,7 @@ class Material(Enum):
         price: float  # price in USD per kg
         density: float  # kgm^-3
 
-    GANG = Info(0, 2_500)  # Gangrenous materials have no economic value. Roughly the density of the Earth's crust
+    GANGUE = Info(0, 2_500)  # Gangue materials have no economic value. Roughly the density of the Earth's crust
     H2O = Info(1_000, 1_000)  # SpaceX's Falcon 9 (used to deliver to the ISS) costs $2,720 per kilogram.
     SI = Info(8.1, 1_400)
     FE = Info(45.6, 7_300)
@@ -103,14 +99,15 @@ class Category(Enum):
         return self.value[0][0]
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}.{self.name} eta={self.pv}>"
+        return f"<{self.__class__.__name__}.{self.name} pv={self.pv}>"
 
 
 class Type:
     """The Tholen type.
 
     - The first numbers are the mean geometric albedo's of 784 different asteroids. [1]
-    - The second number is the infrared beaming parameter for the
+    - The second number is the infrared beaming parameter for the asteroid.
+    - The third list of contents is the average composition of asteroids in the category from the wikipedia pages.
 
     [1] Source: https://iopscience.iop.org/article/10.1088/0004-637X/762/1/56#apj452366app1
     """
@@ -119,35 +116,38 @@ class Type:
         # https://en.wikipedia.org/wiki/C-type_asteroid
         B = (
             (0.113,),
-            [Material.SI, Material.H2O, Material.GANG, Material.FE],
+            [Material.GANGUE, Material.H2O, Material.GANGUE, Material.FE],
         )  # https://en.wikipedia.org/wiki/B-type_asteroid#Characteristics
-        C = (0.061,), [Material.GANG, Material.H2O, Material.FE]
+        C = (0.061,), [Material.GANGUE, Material.H2O, Material.FE]
         F = (
             (0.058,),
-            [Material.FE, Material.GANG],
+            [Material.FE, Material.GANGUE],
         )  # "F-type asteroids have spectra generally similar to those of the B-type asteroids, but lack ... hydrated minerals"
-        G = (0.073,), [Material.GANG]  # https://en.wikipedia.org/wiki/G-type_asteroid  # check Ceres is in this
+        G = (0.073,), [Material.GANGUE]  # https://en.wikipedia.org/wiki/G-type_asteroid  # check Ceres is in this
 
     class S(Category):
         # https://en.wikipedia.org/wiki/S-type_asteroid
         A = (
             (0.282,),
-            [Material.O2, Material.SI, Material.MG],
+            [Material.O2, Material.GANGUE, Material.MG],
         )  # https://en.wikipedia.org/wiki/A-type_asteroid
-        R = (0.277,), [Material.SI, Material.GANG]  # https://en.wikipedia.org/wiki/R-type_asteroid
-        S = (0.213,), [Material.GANG, Material.GANG]  # haven't found info on these yet.
-        O = (0.256,), [Material.GANG, Material.GANG]
+        R = (0.277,), [Material.GANGUE, Material.GANGUE]  # https://en.wikipedia.org/wiki/R-type_asteroid
+        S = (0.213,), [Material.GANGUE, Material.GANGUE]  # haven't found info on these yet.
+        O = (0.256,), [Material.GANGUE, Material.GANGUE]
         K = (
             (0.143,),
-            [Material.SI, Material.GANG, Material.H2O, Material.GANG],
+            [Material.GANGUE, Material.GANGUE, Material.H2O, Material.GANGUE],
         )  # https://en.wikipedia.org/wiki/K-type_asteroid
 
     class X(Category):
-        E = (0.559,), [Material.FE, Material.SI, Material.MG]
-        M = (0.175,), [Material.FE, Material.NI, Material.GANG, Material.PT, Material.GANG]
+        E = (0.559,), [Material.FE, Material.GANGUE, Material.MG]
+        M = (
+            (0.175,),
+            [Material.FE, Material.NI, Material.GANGUE, Material.PT, Material.GANGUE],
+        )  # https://en.wikipedia.org/wiki/M-type_asteroid
         P = (
             (0.049,),
-            [Material.SI, Material.GANG, Material.H2O, Material.GANG],
+            [Material.SI, Material.GANGUE, Material.H2O, Material.GANGUE],
         )  # https://en.wikipedia.org/wiki/P-type_asteroid
 
     CATEGORIES = tuple(itertools.chain.from_iterable(Category.__subclasses__()))
@@ -155,13 +155,16 @@ class Type:
     @classmethod
     def from_(cls, data: Asteroid.Data) -> Category:
         # TODO https://www.aanda.org/articles/aa/pdf/2018/04/aa31806-17.pdf
+        # http://tapvizier.u-strasbg.fr/adql/?J/A+A/612/A85
+        # -- output format : csv
+        # SELECT * FROM "J/A+A/612/A85/table1"
         # for a lot of data on this.
-        dist = statistics.NormalDist(
-            data.eta,  # mean infra red beaming param
-            statistics.fmean(
-                (data.eta1sigu, data.eta1sigl, data.eta3sigu, data.eta3sigl)
-            ),  # mean of the upper and lower sigma bounds
-        )
+        # dist = statistics.NormalDist(
+        #     data.eta,  # mean infra red beaming param
+        #     statistics.fmean(
+        #         (data.eta1sigu, data.eta1sigl, data.eta3sigu, data.eta3sigl)
+        #     ),  # mean of the upper and lower sigma bounds
+        # )
         return min(
             cls.CATEGORIES,
             key=lambda category: abs(  # the minimum absolute difference between the geometric albedos
@@ -170,37 +173,12 @@ class Type:
         )
 
 
-class cached_slot_property(Generic[P, T]):
-    """A decorator for properties that are very frequently lazily accessed."""
-
-    def __init__(self, func: Callable[P, T]):
-        self.__func__ = func
-
-    @overload
-    def __get__(self: Self, instance: None, _) -> Self:
-        ...
-
-    @overload
-    def __get__(self, instance: Any, _) -> T:
-        ...
-
-    def __get__(self, instance: Any, _):  # type: ignore
-        if instance is None:
-            return self
-
-        attr = f"_{self.__func__.__name__}_cs"
-        result = getattr(instance, attr)
-        if result is ...:
-            result = self.__func__(instance)  # type: ignore
-            setattr(instance, attr, result)
-        return result
+class MeanAnomalyFails(Exception):
+    ...
 
 
 @dataclass(slots=True, repr=False)
 class Asteroid(Satellite, Body):
-    orbit_distance: float
-    orbit_period: timedelta
-
     class Data(NamedTuple):
         """Data currently loaded from the data.csv file"""
 
@@ -210,9 +188,9 @@ class Asteroid(Satellite, Body):
         survey: str  # Spitzer Survey
         a: Quantity[units.au]  # Semi-Major Axis
         e: float  # Eccentricity
-        i: float  # Not sure what this is
-        node: Quantity[units.degree]  # Ascending Node
-        argper: Quantity[units.degree]  # Argument of the Periapsis
+        i: Quantity[units.degree]  # Inclination (𝜃)
+        node: Quantity[units.degree]  # Ascending Node (𝜙)
+        argper: Quantity[units.degree]  # Argument of the Periapsis (𝜓)
         period: Quantity[units.year]  # Orbital Period
         ra: Quantity[units.degree]  # Target RA at Midtime (J2000)
         dec: Quantity[units.degree]  # Target Dec at Midtime (J2000)
@@ -229,7 +207,7 @@ class Asteroid(Satellite, Body):
         ra3sig: Quantity[units.arcsec]  # 3 sigma Uncertainty in RA
         dec3sig: Quantity[units.arcsec]  # 3 sigma Uncertainty in Dec
         midtime: datetime  # Observation Midtime (UT)
-        midtimejd: float  # Observation Midtime (UT)
+        midtimejd: Time  # Observation Midtime (UT)
         aorkey: int  # Observation AOR Key
         framet: Union[float, None]  # Frame Time
         totalt: Union[timedelta, None]  # Total Integration Time
@@ -260,21 +238,31 @@ class Asteroid(Satellite, Body):
 
         __repr__ = object.__repr__  # intentionally neuter the repr for easier debugging
 
+    orbit_period: timedelta
     data: Data
     type: Category
     bound_to = Sun
-    miner: Miner = ...
+
+    # set later
+    miner: Miner = Any
+    m_0: float = Any  # mean anomaly at midtime
+
     # cached slots
     _contents_cs = ...
     _radius_cs = ...
     _volume_cs = ...
     _price_cs = ...
     _mass_cs = ...
+    _sky_coord_cs = ...
+    _last_perihelion_cs = ...
     _image_cs = ...
 
-    def __repr__(self):
-        attrs = ("identifier", "type", "contents", "position", "orbit_distance", "orbit_period")
-        resolved = [f"{name}={getattr(self, name)!r}" for name in attrs]
+    def __repr__(self) -> str:
+        attrs = ("identifier", "type", "contents", "position", "orbit_period")
+        try:
+            resolved = [f"{name}={getattr(self, name)!r}" for name in attrs]
+        except MeanAnomalyFails:
+            return f"<{self.__class__.__name__} identifier={self.identifier}>"
         return f"<{self.__class__.__name__} {', '.join(resolved)}>"
 
     @cached_slot_property
@@ -284,6 +272,15 @@ class Asteroid(Satellite, Body):
     @cached_slot_property  # type: ignore
     def radius(self) -> float:
         """The radius of the asteroid assuming it is a perfect sphere."""
+        # TODO maybe use a normal distribution over this
+        # data = self.data
+        # dist = statistics.NormalDist(
+        #     data.diam.si.value,  # mean infra red beaming param
+        #     statistics.fmean(
+        #         (data.d1sigu.si.value, data.d1sigl.si.value, data.d3sigu.si.value, data.d3sigl.si.value)
+        #     ),  # mean of the upper and lower sigma bounds
+        # )
+        # distributed_diameter, = dist.samples(1)
         return self.data.diam.si.value / 2
 
     @cached_slot_property
@@ -299,18 +296,110 @@ class Asteroid(Satellite, Body):
     @cached_slot_property
     def price(self) -> float:
         """The total price of the asteroid."""
-        return sum([c.price for c in self.contents])
+        return sum(c.price for c in self.contents)
 
     @cached_slot_property  # type: ignore
     def mass(self) -> float:
         """The total mass of the asteroid."""
         # density / volume = mass
-        return sum([c.mass for c in self.contents])
+        return sum(c.mass for c in self.contents)
+
+    @cached_slot_property
+    def sky_coord(self) -> SkyCoord:
+        """The sky coordinate when the asteroid was observed."""
+        # needed to do research into the galactic system for working out coordinates
+        return SkyCoord(
+            ra=self.data.ra,
+            dec=self.data.dec,
+            distance=self.geo_obsdist,
+            obstime=self.data.midtimejd,
+        )
+
+    @property
+    def geo_obsdist(self) -> Quantity[units.au]:
+        """The distance from the Earth at midtime."""
+        midtime = self.data.midtimejd
+        spitzer = get_spitzer(midtime).cartesian
+        # to resolve this we have to use pythagoras to find the the c side of the triangle
+        return (
+            math.hypot(
+                self.data.obsdist.value,  # distance from spitzer to asteroid is the a side
+                math.hypot(*spitzer.xyz.value),  # the distance from the earth
+                # distance from the earth to spitzer at the midtime is the b side
+            )
+            * units.au
+        )
+
+    @property
+    def axis(self) -> tuple[float, float]:
+        """The semi major and minor axis of the orbit."""
+        semi_major_axis = self.data.a.si.value
+        # https://en.wikipedia.org/wiki/Ellipse#Eccentricity
+        # e = sqrt(1 - (b/a)^2)
+        # a sqrt(e^2 - 1) = b
+        semi_minor_axis = semi_major_axis * (self.data.e ** 2 - 1) ** 0.5
+        return semi_major_axis, semi_minor_axis
+
+    @cached_slot_property
+    def last_perihelion(self) -> datetime:
+        """
+        Perihelion is the max distance from the Sun.
+        This calculates when this last happened assuming that the orbit has stayed the same.
+        """
+        # the distance from the sun at midtime
+        # r = get_sun(self.data.midtimejd).separation_3d(self.sky_coord).si.value  # type: ignore  # TODO WHY IS THIS DIFFERENT????
+        perihelion, mean_anomaly = determine_perihelion(
+            self.data.heldist.si.value,
+            self.data.e,
+            self.orbit_period.total_seconds(),
+            self.data.a.si.value,
+            self.data.midtime.timestamp(),
+        )
+        self.m_0 = mean_anomaly  # sometimes this is nan, no clue why
+        date, _, tz = perihelion.partition("+")  # have to strip nanoseconds
+        return datetime.fromisoformat(f"{date[:-3]}+{tz}")
+
+    def position_at(self, dt: datetime) -> Position:
+        # https://en.wikipedia.org/wiki/Kepler%27s_laws_of_planetary_motion#Position_as_a_function_of_time
+        n = 2 * math.pi / self.orbit_period.total_seconds()
+        # https://en.wikipedia.org/wiki/Mean_anomaly#Formulae
+        m = n * (dt - self.last_perihelion).total_seconds() + self.m_0
+        if math.isnan(self.m_0):
+            raise MeanAnomalyFails
+        eccentric_anomaly: float = nsolve(
+            E - (self.data.e * sin(E)) - m,  # type: ignore
+            E,
+            0,
+            prec=52,  # max precision for a f64
+        )  # this should only have the one solution as the gradient is always positive
+        phi: float = max(  # the true anomaly
+            solve(
+                (1 + self.data.e) * (math.tan(eccentric_anomaly / 2) ** 2) - (1 - self.data.e) * (tan(theta_ / 2) ** 2),  # type: ignore
+                theta_,
+                0,
+            ),
+            key=itemgetter(0),  # result is of the form [(x, 0), ...] and we want the bigger of the generally 2 results
+        )[0]
+
+        r = self.data.a.si.value * (1 - self.data.e * math.cos(eccentric_anomaly))  # heliocentric distance
+
+        # these assume the universe is 2d and there is no inclination or other transformations applied
+        # so we need to transform the x, y and z components.
+        # convert them using https://en.wikipedia.org/wiki/Spherical_coordinate_system#Cartesian_coordinates
+        theta = self.data.i.si.value  # TODO check inclination should be 180 + i?
+
+        sin_theta = math.sin(theta)
+        # reversed coordinates on wikipedia page to fix these for my coordinate system
+        z = r * math.cos(phi) * sin_theta
+        x = r * math.sin(phi) * sin_theta
+        y = r * math.cos(theta)
+
+        return Position(x, y, z)
 
     def best_to_take_home(self, within_mass: float) -> list[Contents]:
         best: list[Contents] = []
-        for content in sorted(self.contents, key=attrgetter("price_to_density_ratio")):
-            if content.material == Material.GANG:
+        for content in sorted(self.contents, key=attrgetter("price_to_density_ratio"), reverse=True):
+            if content.material == Material.GANGUE:
                 return best
 
             within_mass -= content.mass
@@ -318,7 +407,7 @@ class Asteroid(Satellite, Body):
                 if within_mass != 0:  #  only take some of the contents back
                     total_mass = content.material.density * content.volume
                     best.append(
-                        Contents(content.material, volume=(total_mass + within_mass) * content.material.density)
+                        Contents(content.material, volume=(total_mass + within_mass) / content.material.density)
                     )
                 return best
             best.append(content)
@@ -328,7 +417,7 @@ class Asteroid(Satellite, Body):
     @cached_slot_property
     def image(self) -> str:
         """Retrieve an image of the asteroid."""
-        return self._request()
+        return self._request("image")
 
     @classmethod
     def _request(cls, query: str) -> Any:
@@ -336,6 +425,8 @@ class Asteroid(Satellite, Body):
 
     @classmethod
     def random(cls) -> Asteroid:
+        if not ASTEROIDS:
+            load()
         return random.choice(ASTEROIDS)
         info = cls._request(
             """
@@ -361,7 +452,9 @@ def convert(type: type, value: str) -> Any:
     if type == Union[float, None]:
         return float(value) if value else None
     if type is datetime:
-        return datetime.fromisoformat(value)
+        return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    if type is Time:
+        return Time(value, format="jd")
     if type is timedelta:
         return timedelta(seconds=float(value))
 
@@ -374,7 +467,6 @@ def load():
         Asteroid(
             type=Type.from_(asteroid_data),
             orbit_period=timedelta(seconds=asteroid_data.period.si.value),
-            orbit_distance=asteroid_data.heldist.si.value,
             data=asteroid_data,
         )
         for asteroid_data in (

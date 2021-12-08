@@ -1,3 +1,3 @@
-from .asteroid import Asteroid
-from .models import Miner
+from .asteroid import *
+from .miner import *
 from .station import *

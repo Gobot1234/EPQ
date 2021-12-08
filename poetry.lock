@@ -239,6 +239,17 @@ docs = ["sphinx", "jaraco.packaging (>=8.2)", "rst.linker (>=1.9)"]
 testing = ["pytest (>=4.6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytest-cov", "pytest-enabler (>=1.0.1)", "pytest-black (>=0.3.7)", "pytest-mypy"]
 
 [[package]]
+name = "maturin"
+version = "0.11.5"
+description = "Build and publish crates with pyo3, rust-cpython and cffi bindings as well as rust binaries as python packages"
+category = "dev"
+optional = false
+python-versions = ">=3.6"
+
+[package.dependencies]
+toml = ">=0.10.2,<0.11.0"
+
+[[package]]
 name = "mimeparse"
 version = "0.1.3"
 description = "A module provides basic functions for parsing mime-type names and matching them against a list of media-ranges."
@@ -353,6 +364,17 @@ socks = ["PySocks (>=1.5.6,!=1.5.7)", "win-inet-pton"]
 use_chardet_on_py3 = ["chardet (>=3.0.2,<5)"]
 
 [[package]]
+name = "scipy"
+version = "1.7.2"
+description = "SciPy: Scientific Library for Python"
+category = "main"
+optional = false
+python-versions = ">=3.7,<3.11"
+
+[package.dependencies]
+numpy = ">=1.16.5,<1.23.0"
+
+[[package]]
 name = "secretstorage"
 version = "3.3.1"
 description = "Python bindings to FreeDesktop.org Secret Service API"
@@ -450,8 +472,8 @@ testing = ["pytest (>=4.6)", "pytest-checkdocs (>=2.4)", "pytest-flake8", "pytes
 
 [metadata]
 lock-version = "1.1"
-python-versions = "^3.10"
-content-hash = "5ea42a4c830e50adc0ffc1145928a42060ec43c96f76f274117d381cff65fe41"
+python-versions = "3.9"
+content-hash = "4026b5e5c2e2d80696d670e06040c92d3dbed088372fadae5859a96e86664967"
 
 [metadata.files]
 appdirs = [
@@ -601,6 +623,19 @@ keyring = [
     {file = "keyring-23.2.1-py3-none-any.whl", hash = "sha256:bd2145a237ed70c8ce72978b497619ddfcae640b6dcf494402d5143e37755c6e"},
     {file = "keyring-23.2.1.tar.gz", hash = "sha256:6334aee6073db2fb1f30892697b1730105b5e9a77ce7e61fca6b435225493efe"},
 ]
+maturin = [
+    {file = "maturin-0.11.5-py3-none-macosx_10_7_x86_64.whl", hash = "sha256:d78f24561a5e02f7d119b348b26e5772ad5698a43ca49e8facb9ce77cf273714"},
+    {file = "maturin-0.11.5-py3-none-macosx_10_9_x86_64.macosx_11_0_arm64.macosx_10_9_universal2.whl", hash = "sha256:c2ded8b4ef9210d627bb966bc67661b7db259535f6062afe1ce5605406b50f3f"},
+    {file = "maturin-0.11.5-py3-none-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:1ce666c386ff9c3c2b5d7d3ca4b1f9f675c38d7540ffbda0d5d5bc7d6ddde49a"},
+    {file = "maturin-0.11.5-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b0ac45879a7d624b47d72b093ae3370270894c19779f42aad7568a92951c5d47"},
+    {file = "maturin-0.11.5-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:4191b0b7362b3025096faf126ff15cb682fbff324ac4a6ca18d55bb16e2b759b"},
+    {file = "maturin-0.11.5-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:7bf96e7586bfdb5b0fadc6d662534b8a41123b33dff084fa383a81ded0ce5334"},
+    {file = "maturin-0.11.5-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:ab2b3ccf66f5e0f9c3904d215835337b1bd305e79e3bf53b65bbc80a5755e01b"},
+    {file = "maturin-0.11.5-py3-none-manylinux_2_5_x86_64.manylinux1_x86_64.whl", hash = "sha256:3354d030b88c938a33bf407a6c0f79ccdd2cce3e1e3e4a2d0c92dc2e063adc6e"},
+    {file = "maturin-0.11.5-py3-none-win32.whl", hash = "sha256:20f9c30701c9932ed8026ceaf896fc77ecc76cebd6a182668dbc10ed597f8789"},
+    {file = "maturin-0.11.5-py3-none-win_amd64.whl", hash = "sha256:70381be1585cb9fa5c02b83af80ae661aaad959e8aa0fddcfe195b004054bd69"},
+    {file = "maturin-0.11.5.tar.gz", hash = "sha256:07074778b063a439fdfd5501bd1d1823a216ec5b657d3ecde78fd7f2c4782422"},
+]
 mimeparse = [
     {file = "mimeparse-0.1.3.tar.gz", hash = "sha256:534ff6feefe1cd03984f444e6415aacc79c0a85f3b868ec41a2fd5003004c31e"},
 ]
@@ -723,6 +758,32 @@ regex = [
 requests = [
     {file = "requests-2.26.0-py2.py3-none-any.whl", hash = "sha256:6c1246513ecd5ecd4528a0906f910e8f0f9c6b8ec72030dc9fd154dc1a6efd24"},
     {file = "requests-2.26.0.tar.gz", hash = "sha256:b8aa58f8cf793ffd8782d3d8cb19e66ef36f7aba4353eec859e74678b01b07a7"},
+]
+scipy = [
+    {file = "scipy-1.7.2-1-cp310-cp310-win_amd64.whl", hash = "sha256:dc2d1bf41294e63c7302bf499973ac0c7f73c93c01763db43055f6525234bf11"},
+    {file = "scipy-1.7.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:97eb573e361a73a553b915dc195c6f72a08249964b1a33f157f9659f3b6210d1"},
+    {file = "scipy-1.7.2-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:359b60a0cccd17723b9d5e329a5212a710e771a3ddde800e472fb93732756c46"},
+    {file = "scipy-1.7.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:82c5befebf54d799d77e5f0205c03030f57f69ba2541baa44d2e6ad138c28cd3"},
+    {file = "scipy-1.7.2-cp310-cp310-win_amd64.whl", hash = "sha256:54951f51d731c832b1b8885e0a92e89f33d087de7e40d02078bf0d49c7cbdbb5"},
+    {file = "scipy-1.7.2-cp37-cp37m-macosx_10_9_x86_64.whl", hash = "sha256:30bdda199667e74b50208a793eb1ba47a04e5e3fa16f5ff06c6f7969ae78e4da"},
+    {file = "scipy-1.7.2-cp37-cp37m-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:e3efe7ef75dfe627b354ab0af0dbc918eadee97cc80ff1aabea6d3e01114ebdd"},
+    {file = "scipy-1.7.2-cp37-cp37m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:17fd991a275e4283453f89d404209aa92059ac68d76d804b4bc1716a3742e1b5"},
+    {file = "scipy-1.7.2-cp37-cp37m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:74f518ce542533054695f743e4271cb8986b63f95bb51d70fcee4f3929cbff7d"},
+    {file = "scipy-1.7.2-cp37-cp37m-win32.whl", hash = "sha256:1437073f1d4664990879aa8f9547524764372e0fef84a077be4b19e82bba7a8d"},
+    {file = "scipy-1.7.2-cp37-cp37m-win_amd64.whl", hash = "sha256:39f838ea5ce8da868785193d88d05cf5a6d5c390804ec99de29a28e1dcdd53e6"},
+    {file = "scipy-1.7.2-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:e08b81fcd9bf98740b58dc6fdd7879e33a64dcb682201c1135f7d4a75216bb05"},
+    {file = "scipy-1.7.2-cp38-cp38-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:7b1d0f5f524518f1a86f288443528e4ff4a739c0966db663af4129b7ac7849f8"},
+    {file = "scipy-1.7.2-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cac71d5476a6f56b50459da21f6221707e0051ebd428b2137db32ef4a43bb15e"},
+    {file = "scipy-1.7.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4d175ba93e00d8eef8f7cd70d4d88a9106a86800c82ea03cf2268c36d6545483"},
+    {file = "scipy-1.7.2-cp38-cp38-win32.whl", hash = "sha256:8b5726a0fedeaa6beb1095e4466998bdd1d1e960b28db9b5a16c89cbd7b2ebf1"},
+    {file = "scipy-1.7.2-cp38-cp38-win_amd64.whl", hash = "sha256:8482c8e45857ab0a5446eb7460d2307a27cbbe659d6d2257820c6d6eb950fd0f"},
+    {file = "scipy-1.7.2-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:1ea6233f5a365cb7945b4304bd06323ece3ece85d6a3fa8598d2f53e513467c9"},
+    {file = "scipy-1.7.2-cp39-cp39-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:d86abd1ddf421dea5e9cebfeb4de0d205b3dc04e78249afedba9c6c3b2227ff2"},
+    {file = "scipy-1.7.2-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2d25272c03ee3c0fe5e0dff1bb7889280bb6c9e1766fa9c7bde81ad8a5f78694"},
+    {file = "scipy-1.7.2-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5273d832fb9cd5724ee0d335c16a903b923441107dd973d27fc4293075a9f4e3"},
+    {file = "scipy-1.7.2-cp39-cp39-win32.whl", hash = "sha256:87cf3964db0f1cce17aeed5bfc1b89a6b4b07dbfc48e50d21fa3549e00456803"},
+    {file = "scipy-1.7.2-cp39-cp39-win_amd64.whl", hash = "sha256:a80eb01c43fd98257ec7a49ff5cec0edba32031b5f86503f55399a48cb2c5379"},
+    {file = "scipy-1.7.2.tar.gz", hash = "sha256:fa2dbabaaecdb502641b0b3c00dec05fb475ae48655c66da16c9ed24eda1e711"},
 ]
 secretstorage = [
     {file = "SecretStorage-3.3.1-py3-none-any.whl", hash = "sha256:422d82c36172d88d6a0ed5afdec956514b189ddbfb72fefab0c8a1cee4eaf71f"},
