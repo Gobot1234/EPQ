@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from re import I
 from typing import NamedTuple, Protocol
 
 from typing_extensions import Self
@@ -64,7 +63,8 @@ class Position(NamedTuple):
 
 class HasPosition(Protocol):
     @property
-    def position(self) -> Position: ...
+    def position(self) -> Position:
+        ...
 
     def position_at(self, dt: datetime) -> Position:
         ...

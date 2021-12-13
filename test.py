@@ -1,4 +1,4 @@
-from typing import Protocol, TypeVar, Any
+from typing import Any, Protocol, TypeVar
 
 T = TypeVar("T", bound=type[Any], contravariant=True)
 

@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import math
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from astropy.constants import G
-from sympy import log
-import sympy
-from sympy.abc import m
-from scipy.optimize import minimize_scalar
-from scipy.optimize import root_scalar
+from scipy.optimize import minimize_scalar, root_scalar
 
 from .asteroid import Asteroid, Contents
 from .position import HasPosition
@@ -29,23 +26,29 @@ class Miner:
     asteroid: Asteroid | None = None
 
     money_made: float = 0.0
-    efficiency: float = 43_000_000  # conversion rate of the 1kg of fuel to energy in Joules.
+    elapsed_time: timedelta = field(default_factory=timedelta)
+    time_at_arrival: datetime = field(default_factory=partial(datetime.now, tz=timezone.utc))
+    distance_travelled: float = 0.0
+    efficiency: float = 45_000_000  # conversion rate of the 1kg of fuel to energy in Joules.
     # https://en.wikipedia.org/wiki/Energy_density#In_chemical_reactions_(oxidation)
-    base_mass: float = Any
+    base_mass: float = 5_000.0
     fuel: float = Any  # the mass of fuel the miner has in kg.
-    base_fuel: float = 407_000 + 107_200  # TODO maybe optimize for wet amount using the rearrangement on wikipedia
-    current_stage_final_mass: float = Any
+    stage_one_fuel = 407_000
+    stage_two_fuel = 107_200
+    base_fuel: float = (
+        stage_one_fuel + stage_two_fuel
+    )  # TODO maybe optimize for wet amount using the rearrangement on wikipedia
     # https://www.spacelaunchreport.com/falconH.html
+    current_stage_final_mass: float = Any
 
     def __post_init__(self) -> None:
         self.position = self.base_station.position
-        self.base_mass = 4_500
         self.fuel = self.base_fuel
-        self.current_stage_final_mass = 407_000 + self.base_mass
+        self.current_stage_final_mass = self.stage_two_fuel + self.base_mass
 
     @property
     def profit(self) -> float:
-        FUEL_COST = 0.4
+        FUEL_COST = 1.05  # https://www.globalpetrolprices.com/kerosene_prices (0.85/L and 1L=0.817)
         return self.money_made - (self.base_fuel * FUEL_COST)
 
     @property
@@ -60,28 +63,29 @@ class Miner:
     def fuel_to_get_to(self, target: HasPosition) -> float:
         assert hasattr(target, "orbit_period")
         delta_v_for_asteroid = getattr(self.asteroid, "delta_v_for", None)
-        delta_v = (delta_v_for_asteroid or self.base_station.delta_v_for)(
-            self, atm=0 if delta_v_for_asteroid is not None else self.base_station.atm
-        )
+        delta_v = (delta_v_for_asteroid or self.base_station.delta_v_for)(self)
 
         energy = 1 / 2 * self.mass * delta_v ** 2  # to escape station's gravity
         base_position = self.position
-        self.base_mass = 4_500  # since we are performing a 2 stage escape we only have 107T of payload after leaving station's gravity
+        print("Fuel for 1st stage is", energy / self.efficiency)
 
-        now = datetime.now(tz=timezone.utc)
+        now = self.time_at_arrival
         final_position: Position
         distance: float
         time: datetime
+        delta: timedelta
 
-        def func(x: float) -> float:  # optimise to wait for the shortest distance to the asteroid
-            nonlocal time, final_position, distance
-            time = now + timedelta(seconds=x)
-            final_position = target.position_at(now + timedelta(seconds=x))
+        # TODO actually make the time taken to get there count?
+        def distance_at(x: float) -> float:  # optimise to wait for the shortest distance to the asteroid
+            nonlocal time, final_position, distance, delta
+            delta = timedelta(seconds=x)
+            time = now + delta
+            final_position = target.position_at(time)
             distance = base_position | final_position
             return distance / delta_v
 
         minimize_scalar(
-            func,
+            distance_at,
             bounds=(
                 0,
                 20 * 365 * 24 * 60 * 60,
@@ -90,6 +94,9 @@ class Miner:
             options={"maxiter": 10 ** 100},
         )  # iterations over the eculidian distance between the orbits over a year for the next 20 years.
 
+        self.distance_travelled += distance
+        self.time_at_arrival = time
+        self.elapsed_time += delta
         self.position = final_position
         # here we assume change in mass is not significant
         #
@@ -118,7 +125,7 @@ class Miner:
         )
 
         return (
-            (energy * 2) + gravitational_energy  # amount of energy required is same for both take off and landing
+            energy * 2 + gravitational_energy  # amount of energy required is same for both take off and landing
         ) / self.efficiency
 
     def travel_to(self, target: HasPosition) -> None:
@@ -130,35 +137,34 @@ class Miner:
                 return print("Asteroid", target.identifier, "is too far away to travel to for the next 20 years")
             remaining_energy = self.fuel * self.efficiency
 
-            # rearrangement on E = m/2 * ∆v^2 where m is a varible to be found and v is a function of m (rocket eq.)
-            # 0 = 2E / ∆v^2 - m
-            # (-569 * atm + ve) * math.log(miner.mass / miner.current_stage_final_mass)
-            f = 2 * remaining_energy / (3510 * (log(self.mass / (m + 4_500)))) ** 2 - m
-            print(f)
-            f_prime = f.diff()
-            f_prime_prime = f_prime.diff()
+            def f(m: float) -> float:
+                # rearrangement on E = m/2 * ∆v^2 where m is a varible to be found and v is a function of m (rocket eq.)
+                # 0 = 2E / ∆v^2 - m
+                # (-569 * atm + ve) * math.log(miner.mass / miner.current_stage_final_mass)
+                return 2 * remaining_energy / (3410 * (math.log(self.mass / (m + self.base_mass)))) ** 2 - m
 
             solutions = root_scalar(
-                f=lambda x: float(f.replace(m, x).evalf()),
+                f=f,
                 # fprime=lambda x: float(f_prime.replace(m, x).evalf()),
                 # fprime2=lambda x: float(f_prime_prime.replace(m, x).evalf()),
                 # x0=10 ** 10,  # something very likely to be on the other side of the asymptote
-                options={"maxiter": sys.maxsize},
-                bracket=(-4500, sys.maxsize),
+                # options={"maxiter": sys.maxsize},
+                bracket=(0.01, sys.maxsize),
             )  # there should only be one solution to this
-            print(solutions)
             final_mass: float = solutions.root
             self.asteroid = target
             self.carrying = target.best_to_take_home(final_mass - self.mass)
         elif isinstance(target, Station):
             if self.carrying:
                 self.money_made += sum(c.price for c in self.carrying)
-                self.current_stage_final_mass = sum(c.mass for c in self.carrying)
+                self.current_stage_final_mass = sum(c.mass for c in self.carrying) + self.base_mass
             try:
-                self.fuel -= self.fuel_to_get_to(target)
+                fuel = self.fuel_to_get_to(target)
+                self.fuel -= fuel
             except ValueError:
-                # fuel is too low to return to earth
+                fuel = None
                 self.money_made = 0
+            print("Fuel to get to the", self.base_station.__class__.__name__, "is", fuel)
 
         position = target.position
 

@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache, partial
 from typing import Any, Final, Generic, ParamSpec, TypeVar, overload
-from datetime import timezone
 
 from astropy import units
 from astropy.coordinates import SkyCoord, UnitSphericalRepresentation, get_body

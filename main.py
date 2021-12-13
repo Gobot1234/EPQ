@@ -1,45 +1,54 @@
+from tabulate import tabulate
+
 from miner import *
 from miner.asteroid import ASTEROIDS, load
-from tabulate import tabulate
 
 
 def main() -> None:
     load()
 
     def traveller(asteroid: Asteroid) -> float:
-        miner = Miner(Earth)
+        miner = Miner(Moon)
+        asteroid.miner = miner
         try:
             miner.travel_to(asteroid)
         except MeanAnomalyFails:
             return -math.inf
+        print(miner.time_at_arrival)
+        miner.time_at_arrival += timedelta(days=120)  # stay for 4 months to mine then prepare to return
         miner.travel_to(miner.base_station)
+        print(miner.time_at_arrival)
 
-        asteroid.miner = miner
         return miner.profit
 
-    # funny bug with the most profit being 0
-    sorted_asteroids = sorted(ASTEROIDS, key=traveller)
-    print(len(sorted_asteroids))
-    print(sorted_asteroids[0].miner.fuel)
-    print(
-        "Most profitable asteroid is", sorted_asteroids[0].identifier, f"making you ${sorted_asteroids[0].miner.profit}"
-    )
+    sorted_asteroids = sorted(ASTEROIDS, key=traveller, reverse=True)
 
-    print(
-        tabulate(
+    table = tabulate(
+        (
             (
-                (
-                    a.identifier,
-                    a.miner.profit,
-                    ", ".join(c.material.name for c in a.miner.carrying or ()) or "Nothing",
-                    None,
-                )
-                for a in sorted_asteroids
-            ),
-            ["identifier", "profit", "contents", "time for mission"],
-            tablefmt="grid",
-        )
+                a.identifier,
+                f"{a.miner.profit:,}",
+                ", ".join(c.material.name for c in a.miner.carrying or ()) or "Nothing",
+                f"{a.miner.distance_travelled:,}",
+                str(a.miner.elapsed_time)[: -len(".000000")],  # strip microseconds
+                f"{a.miner.time_at_arrival:%d/%m/%Y %H:%M}",
+            )
+            for a in sorted_asteroids
+        ),
+        (
+            "Identifier",
+            "Profit (USD)",
+            "Collected Materials",
+            "Distance travelled (m)",
+            "Elapsed time",
+            "Return date mission (dd-mm-YYYY HH:MM)",
+        ),
+        tablefmt="grid",
     )
+    with open(f"media/{sorted_asteroids[0].miner.base_station.__class__.__name__} Base Table.txt", "w+") as f:
+        f.write(table)
+
+    print(table)
 
 
 if __name__ == "__main__":

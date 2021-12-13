@@ -42,6 +42,7 @@ class Body:
     mass: float
     radius: float
     position: Position
+    atm: float = 0.0  # atmospheric pressure compared to the Earths
 
     @property
     def gravity(self) -> float:
@@ -51,16 +52,16 @@ class Body:
         self,
         miner: Miner,
         *,
-        atm: float,  # atmospheric pressure compared to the Earths.
-        ve: float = 3510,
+        ve: float = 9.80665
+        * 282,  # Sea level: 282 seconds (https://en.wikipedia.org/wiki/Falcon_Heavy) then to convert to Ve times by g_0
     ) -> float:
         """Based on https://en.wikipedia.org/wiki/Tsiolkovsky_rocket_equation"""
         # value of ve is the mean of https://en.wikipedia.org/wiki/Liquid_rocket_propellant#Bipropellants's LOX column as
         # this is the fuel that the Falcon Heavy uses.
-        # ∆y / ∆x = (3510 - 2941) / (1 - 0) = 569
+        # ∆y / ∆x = (3412 - 2765) / (1 - 0) = 647
         # assuming here that the change of ve is linear.
-        # y = -569x + 2372
-        return (-569 * atm + ve) * math.log(miner.mass / miner.current_stage_final_mass)
+        # y = -657x + 3412
+        return (-657 * self.atm + ve) * math.log(miner.mass / miner.current_stage_final_mass)
 
 
 class Planet(Station, Body):
@@ -81,11 +82,7 @@ class Satellite(Station):
     bound_to: HasPosition
     orbit_distance: float
     orbit_period: timedelta
-
-    def position_at(self, dt: datetime) -> Position:
-        main_station_position = self.bound_to.position_at(dt)
-        position = Planet.position_at(self, dt)  # type: ignore
-        return position + main_station_position
+    position_at = Planet.position_at
 
 
 def instantiate(cls: Callable[[], T]) -> T:
