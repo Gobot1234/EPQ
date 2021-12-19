@@ -71,9 +71,18 @@ class Planet(Station, Body):
 
     def position_at(self, dt: datetime) -> Position:
         time = Time(dt)
+        #          M
+        #         /
+        #        /
+        # S     /
+        #  \   /
+        #   \ /
+        #    E
+        # ->   ->   ->
+        # SM = SE + EM
         sky_coord = get_body(self.name, time)  # relative to the Earth, needs re-framing
         position: CartesianRepresentation = sky_coord.cartesian - get_sun(time).cartesian  # type: ignore
-        return Position(position.x.si.value, position.y.si.value, position.z.si.value)  # type: ignore
+        return Position(*position.xyz.si.value)  # type: ignore
 
 
 class Satellite(Station):

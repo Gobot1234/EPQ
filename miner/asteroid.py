@@ -8,29 +8,24 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from operator import attrgetter, itemgetter
+from operator import attrgetter
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, ParamSpec, TypeVar, Union, get_type_hints
 
+from poliastro.bodies import Sun as PoliSun
+from poliastro.twobody import Orbit
 from astropy import units
-from astropy.constants import G
-from astropy.coordinates import SkyCoord, get_sun
-from astropy.coordinates.representation import CartesianRepresentation
 from astropy.time import Time
 from astropy.units import Quantity
-from sympy import nsolve, sin, solve, tan
-from sympy.abc import E
-from sympy.abc import theta as theta_
-
-from _miner import determine_perihelion
 
 from .position import Position
 from .station import Body, Satellite, Sun
-from .utils import cached_slot_property, get_spitzer
+from .utils import cached_slot_property
 
 if TYPE_CHECKING:
     from .miner import Miner
 
 
+__all__ = ("ASTEROIDS", "Asteroid", "load", "MeanAnomalyFails")
 ASTEROIDS: Final[Sequence[Asteroid]] = []
 
 T = TypeVar("T")
@@ -238,14 +233,12 @@ class Asteroid(Satellite, Body):
 
         __repr__ = object.__repr__  # intentionally neuter the repr for easier debugging
 
-    orbit_period: timedelta
     data: Data
     type: Category
     bound_to = Sun
 
     # set later
     miner: Miner = Any
-    m_0: float = Any  # mean anomaly at midtime
 
     # cached slots
     _contents_cs = ...
@@ -253,12 +246,11 @@ class Asteroid(Satellite, Body):
     _volume_cs = ...
     _price_cs = ...
     _mass_cs = ...
-    _sky_coord_cs = ...
-    _last_perihelion_cs = ...
+    _orbit_cs = ...
     _image_cs = ...
 
     def __repr__(self) -> str:
-        attrs = ("identifier", "type", "contents", "position", "orbit_period")
+        attrs = ("identifier", "type", "contents", "position", "orbit")
         try:
             resolved = [f"{name}={getattr(self, name)!r}" for name in attrs]
         except MeanAnomalyFails:
@@ -305,96 +297,27 @@ class Asteroid(Satellite, Body):
         return sum(c.mass for c in self.contents)
 
     @cached_slot_property
-    def sky_coord(self) -> SkyCoord:
-        """The sky coordinate when the asteroid was observed."""
-        # needed to do research into the galactic system for working out coordinates
-        return SkyCoord(
-            ra=self.data.ra,
-            dec=self.data.dec,
-            distance=self.geo_obsdist,
-            obstime=self.data.midtimejd,
+    def orbit(self) -> Orbit:
+        try:
+            e = math.acos((self.data.a.si.value - self.data.heldist.si.value) / (self.data.a.si.value * self.data.e))
+        except ValueError:
+            raise MeanAnomalyFails
+        m = e - (self.data.e * math.sin(e))
+        return Orbit.from_classical(  # type: ignore
+            PoliSun,
+            self.data.a,
+            self.data.e * units.one,
+            self.data.i,
+            self.data.node,
+            self.data.argper,
+            m * units.degree,
+            epoch=self.data.midtimejd,
         )
-
-    @property
-    def geo_obsdist(self) -> Quantity[units.au]:
-        """The distance from the Earth at midtime."""
-        midtime = self.data.midtimejd
-        spitzer = get_spitzer(midtime).cartesian
-        # to resolve this we have to use pythagoras to find the the c side of the triangle
-        return (
-            math.hypot(
-                self.data.obsdist.value,  # distance from spitzer to asteroid is the a side
-                math.hypot(*spitzer.xyz.value),  # the distance from the earth
-                # distance from the earth to spitzer at the midtime is the b side
-            )
-            * units.au
-        )
-
-    @property
-    def axis(self) -> tuple[float, float]:
-        """The semi major and minor axis of the orbit."""
-        semi_major_axis = self.data.a.si.value
-        # https://en.wikipedia.org/wiki/Ellipse#Eccentricity
-        # e = sqrt(1 - (b/a)^2)
-        # a sqrt(e^2 - 1) = b
-        semi_minor_axis = semi_major_axis * (self.data.e ** 2 - 1) ** 0.5
-        return semi_major_axis, semi_minor_axis
-
-    @cached_slot_property
-    def last_perihelion(self) -> datetime:
-        """
-        Perihelion is the max distance from the Sun.
-        This calculates when this last happened assuming that the orbit has stayed the same.
-        """
-        # the distance from the sun at midtime
-        # r = get_sun(self.data.midtimejd).separation_3d(self.sky_coord).si.value  # type: ignore  # TODO WHY IS THIS DIFFERENT????
-        perihelion, mean_anomaly = determine_perihelion(
-            self.data.heldist.si.value,
-            self.data.e,
-            self.orbit_period.total_seconds(),
-            self.data.a.si.value,
-            self.data.midtime.timestamp(),
-        )
-        self.m_0 = mean_anomaly  # sometimes this is nan, no clue why
-        date, _, tz = perihelion.partition("+")  # have to strip nanoseconds
-        return datetime.fromisoformat(f"{date[:-3]}+{tz}")
 
     def position_at(self, dt: datetime) -> Position:
-        # https://en.wikipedia.org/wiki/Kepler%27s_laws_of_planetary_motion#Position_as_a_function_of_time
-        n = 2 * math.pi / self.orbit_period.total_seconds()
-        # https://en.wikipedia.org/wiki/Mean_anomaly#Formulae
-        m = n * (dt - self.last_perihelion).total_seconds() + self.m_0
-        if math.isnan(self.m_0):
-            raise MeanAnomalyFails
-        eccentric_anomaly: float = nsolve(
-            E - (self.data.e * sin(E)) - m,  # type: ignore
-            E,
-            0,
-            prec=52,  # max precision for a f64
-        )  # this should only have the one solution as the gradient is always positive
-        phi: float = max(  # the true anomaly
-            solve(
-                (1 + self.data.e) * (math.tan(eccentric_anomaly / 2) ** 2) - (1 - self.data.e) * (tan(theta_ / 2) ** 2),  # type: ignore
-                theta_,
-                0,
-            ),
-            key=itemgetter(0),  # result is of the form [(x, 0), ...] and we want the bigger of the generally 2 results
-        )[0]
-
-        r = self.data.a.si.value * (1 - self.data.e * math.cos(eccentric_anomaly))  # heliocentric distance
-
-        # these assume the universe is 2d and there is no inclination or other transformations applied
-        # so we need to transform the x, y and z components.
-        # convert them using https://en.wikipedia.org/wiki/Spherical_coordinate_system#Cartesian_coordinates
-        theta = self.data.i.si.value  # TODO check inclination should be 180 + i?
-
-        sin_theta = math.sin(theta)
-        # reversed coordinates on wikipedia page to fix these for my coordinate system
-        z = r * math.cos(phi) * sin_theta
-        x = r * math.sin(phi) * sin_theta
-        y = r * math.cos(theta)
-
-        return Position(x, y, z)
+        pos = self.orbit.propagate((dt - self.data.midtime).total_seconds() * units.s)
+        cartesian: Quantity[units.km, units.km, units.km] = pos.r
+        return Position(*cartesian.si.value)
 
     def best_to_take_home(self, within_mass: float) -> list[Contents]:
         best: list[Contents] = []
@@ -466,7 +389,6 @@ def load():
     ASTEROIDS += [  # type: ignore
         Asteroid(
             type=Type.from_(asteroid_data),
-            orbit_period=timedelta(seconds=asteroid_data.period.si.value),
             data=asteroid_data,
         )
         for asteroid_data in (

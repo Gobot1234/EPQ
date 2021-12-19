@@ -1,7 +1,6 @@
 from tabulate import tabulate
 
 from miner import *
-from miner.asteroid import ASTEROIDS, load
 
 
 def main() -> None:
@@ -18,7 +17,6 @@ def main() -> None:
         miner.time_at_arrival += timedelta(days=120)  # stay for 4 months to mine then prepare to return
         miner.travel_to(miner.base_station)
         print(miner.time_at_arrival)
-
         return miner.profit
 
     sorted_asteroids = sorted(ASTEROIDS, key=traveller, reverse=True)

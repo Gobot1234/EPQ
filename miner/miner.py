@@ -8,6 +8,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from astropy.constants import G
+from astropy import units
 from scipy.optimize import minimize_scalar, root_scalar
 
 from .asteroid import Asteroid, Contents
@@ -27,6 +28,7 @@ class Miner:
 
     money_made: float = 0.0
     elapsed_time: timedelta = field(default_factory=timedelta)
+    time_set_off: datetime = field(default_factory=partial(datetime.now, tz=timezone.utc))
     time_at_arrival: datetime = field(default_factory=partial(datetime.now, tz=timezone.utc))
     distance_travelled: float = 0.0
     efficiency: float = 45_000_000  # conversion rate of the 1kg of fuel to energy in Joules.
@@ -61,7 +63,6 @@ class Miner:
         return self.position | self.base_station.position
 
     def fuel_to_get_to(self, target: HasPosition) -> float:
-        assert hasattr(target, "orbit_period")
         delta_v_for_asteroid = getattr(self.asteroid, "delta_v_for", None)
         delta_v = (delta_v_for_asteroid or self.base_station.delta_v_for)(self)
 
@@ -84,7 +85,7 @@ class Miner:
             distance = base_position | final_position
             return distance / delta_v
 
-        minimize_scalar(
+        res = minimize_scalar(
             distance_at,
             bounds=(
                 0,
@@ -93,9 +94,10 @@ class Miner:
             method="bounded",
             options={"maxiter": 10 ** 100},
         )  # iterations over the eculidian distance between the orbits over a year for the next 20 years.
-
+        print((distance * units.m).to(units.au))
         self.distance_travelled += distance
-        self.time_at_arrival = time
+        self.time_set_off = time
+        self.time_at_arrival = time + timedelta(seconds=res.x)
         self.elapsed_time += delta
         self.position = final_position
         # here we assume change in mass is not significant
